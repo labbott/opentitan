@@ -2,80 +2,142 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "sw/device/lib/aes.h"
+#include "sw/device/lib/base/stdasm.h"
 #include "sw/device/lib/common.h"
+#include "sw/device/lib/log.h"
 #include "sw/device/lib/uart.h"
+#include "sw/device/lib/aes.h"
 
-// The following plaintext, key and ciphertext are extracted from Appendix C of
-// the Advanced Encryption Standard (AES) FIPS Publication 197 available at
-// https://www.nist.gov/publications/advanced-encryption-standard-aes
+// Based on Appendix F.1.1 of https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
 
-static const uint8_t plain_text_1[16] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
-                                         0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
-                                         0xcc, 0xdd, 0xee, 0xff};
 
-static const uint8_t key_32_1[32] = {
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
-    0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
-    0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+static unsigned char key[] = {0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+		     0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c };
 
-static const uint8_t cipher_text_gold_32_1[16] = {
-    0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf,
-    0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49, 0x60, 0x89};
+// Blocks 1-4
+static unsigned char plain[] = {
+    0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+    0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
+    0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c,
+    0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51,
+    0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11,
+    0xe5, 0xfb, 0xc1, 0x19, 0x1a, 0x0a, 0x52, 0xef,
+    0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17,
+    0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10
+};
 
-int main(int argc, char **argv) {
-  bool has_error = false;
+// Blocks 1-4
+static unsigned char cypher[] = {
+    0x3a, 0xd7, 0x7b, 0xb4, 0x0d, 0x7a, 0x36, 0x60,
+    0xa8, 0x9e, 0xca, 0xf3, 0x24, 0x66, 0xef, 0x97,
+    0xf5, 0xd3, 0xd5, 0x85, 0x03, 0xb9, 0x69, 0x9d,
+    0xe7, 0x85, 0x89, 0x5a, 0x96, 0xfd, 0xba, 0xaf,
+    0x43, 0xb1, 0xcd, 0x7f, 0x59, 0x8e, 0xce, 0x23,
+    0x88, 0x1b, 0x00, 0xe3, 0xed, 0x03, 0x06, 0x88,
+    0x7b, 0x0c, 0x78, 0x5e, 0x27, 0xe8, 0xad, 0x3f,
+    0x82, 0x23, 0x20, 0x71, 0x04, 0x72, 0x5d, 0xd4
+};
 
-  // Wait for AES unit being idle
-  while (!aes_idle()) {
-  }
+static unsigned char out[16*4];
 
-  uint8_t buffer[16];
+void aes_test_trigger(void) {
+  aes_cfg_t cfg;
+  int i, j;
+  int error = 0;
+  unsigned char *working = plain;
+  unsigned char *outp = out;
+  LOG_INFO("start AES test with trigger\n");
 
-  uart_init(UART_BAUD_RATE);
-  uart_send_str("Running AES test\r\n");
-
-  // Setup AES config
-  aes_cfg_t aes_cfg = {
-      .key_len = kAes256, .manual_operation = false,
-  };
-
-  aes_key_put(key_32_1, aes_cfg.key_len);
-
-  // Encode
-  aes_cfg.operation = kAesEnc;
-  aes_init(aes_cfg);
-  aes_data_put_wait(plain_text_1);
-  aes_data_get_wait(buffer);
-
-  // Check against golden cipher text
-  for (int i = 0; i < 16; i++) {
-    if (cipher_text_gold_32_1[i] != buffer[i]) {
-      has_error = true;
-    }
-  }
-
-  // Decode
-  aes_cfg.operation = kAesDec;
-  aes_init(aes_cfg);
-  aes_data_put_wait(buffer);
-  aes_data_get_wait(buffer);
-
-  // Check against input plain text
-  for (int i = 0; i < 16; i++) {
-    if (plain_text_1[i] != buffer[i]) {
-      has_error = true;
-    }
-  }
-
-  // Clear
   aes_clear();
+  cfg.operation = kAesEnc;
+  cfg.key_len = kAes128;
+  cfg.manual_operation = 1;
 
-  if (has_error) {
-    uart_send_str("FAIL!\r\n");
-  } else {
-    uart_send_str("PASS!\r\n");
+  aes_init(cfg);
+
+  aes_key_put(key, kAes128);
+
+
+  for (i = 0; i < 4; i++) {
+	aes_data_put_wait(working);
+	working += 16;
+	aes_trigger();
+	aes_data_get_wait(outp);
+	outp += 16;	
+  }
+  LOG_INFO("done!\n");
+  for (j = 0; j < 16*4; j++){
+	if (cypher[j] != out[j]) {
+		error = 1;
+		break;
+	}
   }
 
-  return 0;
+  if (error) {
+	LOG_INFO("Found an error at byte %d\n", j);
+  } else {
+	LOG_INFO("Encryption succesful!\n");
+  }
+
 }
+
+void aes_test_automatic(void) {
+  aes_cfg_t cfg;
+  int i, j;
+  int error = 0;
+  unsigned char *working = plain;
+  unsigned char *outp = out;
+  LOG_INFO("start AES test\n");
+
+  aes_clear();
+  cfg.operation = kAesEnc;
+  cfg.key_len = kAes128;
+  cfg.manual_operation = 0;
+
+  aes_init(cfg);
+
+  aes_key_put(key, kAes128);
+
+  aes_data_put_wait(working);
+  working += 16;
+  aes_data_put(working);
+  working += 16;
+
+  LOG_INFO("wrote intial data\n");
+  for (i = 0; i < 4; i++) {
+
+	 aes_data_get_wait(outp);
+	 outp += 16;
+
+  	LOG_INFO("got data for block %d\n", i);
+	 if (i < 2) {
+		aes_data_put(working);
+		working += 16;
+  		LOG_INFO("write for block %d\n", i+2);
+	 }
+		
+  }
+
+  LOG_INFO("done!\n");
+  for (j = 0; j < 16*4; j++){
+	if (cypher[j] != out[j]) {
+		error = 1;
+		break;
+	}
+  }
+  if (error) {
+	LOG_INFO("Found an error at byte %d\n", j);
+  } else {
+	LOG_INFO("Encryption succesful!\n");
+  }
+
+}
+
+int main(void) {
+	uart_init(UART_BAUD_RATE);
+	//aes_test_trigger();
+	aes_test_automatic();
+	return 0;
+}
+
+

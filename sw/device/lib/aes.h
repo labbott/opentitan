@@ -108,4 +108,6 @@ bool aes_idle(void);
  */
 void aes_clear(void);
 
+void aes_trigger(void);
+
 #endif  // OPENTITAN_SW_DEVICE_LIB_AES_H_

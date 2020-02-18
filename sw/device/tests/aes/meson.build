@@ -10,6 +10,7 @@ aes_test_elf = executable(
     sw_lib_aes,
     sw_lib_uart,
     sw_lib_mem,
+    sw_lib_log,
     riscv_crt,
   ],
 )
